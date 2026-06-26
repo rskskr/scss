@@ -104,7 +104,7 @@ half3 calcDiffuseGI(half3 albedo, SCSS_LightrampData data, half3 indirectLightin
     indirectLighting = lerp(indirectLighting, directLighting, data.tone0.col);
     indirectAverage = lerp(indirectAverage, directLighting, data.tone0.col);
 
-    return lerp(indirectAverage, lerp(indirectLighting, directLighting, indirectContribution), ambientLightSplitFactor) * albedo;
+    return lerp(indirectAverage, lerp(indirectLighting, directLighting, indirectContribution), ambientLightSplitFactor);
 }
 
 half3 calcDiffuseGI(half3 albedo, SCSS_CrosstoneData data, half3 indirectLighting, half3 directLighting, half remappedLight) {
@@ -129,7 +129,7 @@ half3 calcDiffuseGI(half3 albedo, SCSS_CrosstoneData data, half3 indirectLightin
 half3 calcDiffuseBase(half3 albedo, SCSS_LightrampData data, half attenuation, half3 lightColor, half remappedLight) {
     remappedLight = applyAttenuation(remappedLight, attenuation);
     remappedLight = applyShadowLift(remappedLight, data.tone0.bias * data.occlusion, data.shadowLift);
-    half3 lightContribution = lerp(data.tone0.col, 1.0, sampleRampWithOptions(remappedLight, data.softness)) * albedo;
+    half3 lightContribution = lerp(data.tone0.col, 1.0, sampleRampWithOptions(remappedLight, data.softness));
     lightContribution *= lightColor;
     lightContribution *= _LightWrappingCompensationFactor;
     return lightContribution;
@@ -154,7 +154,7 @@ half3 calcDiffuseAdd(half3 albedo, SCSS_LightrampData data, half combinedAtten, 
     half3 directLighting = lightColor;
     half3 indirectLighting = lightColor * data.tone0.col;
 
-    lightContribution = lerp(indirectLighting, directLighting, lightContribution) * albedo;
+    lightContribution = lerp(indirectLighting, directLighting, lightContribution);
     return lightContribution;
 }
 
@@ -234,6 +234,10 @@ half3 getDirectSpecular(SCSS_Input c, SCSS_ShadingParam p, SCSS_LightParam d, Co
         }
 
         specularTerm = V * D * UNITY_PI; // Torrance-Sparrow
+
+        if (getLightClampActive()) {
+            specularTerm = specularTerm / max(max3(FLT_EPS + l.color), 1);
+        } 
         specularTerm = max(0, specularTerm * d.NdotL);
 
         return specularTerm * l.color * attenuation * FresnelTerm(c.specColor, d.LdotH) * _SpecularHighlights;
@@ -349,6 +353,15 @@ half3 SCSS_ShadeBase(const SCSS_Input c, const SCSS_ShadingParam p, CompatLight 
 
     finalColor  = calcDiffuseGI(c.albedo, shadingData, indirectLighting, directLighting, giLight);
     finalColor += calcDiffuseBase(c.albedo, shadingData, totalShadow, l.color, remappedLight);
+
+	#if !defined(SCSS_CROSSTONE)
+	// Albedo-preserving light clamp for Lightramp mode. Not possible for Crosstone mode.
+	if (getLightClampActive()) {
+		finalColor = saturate(finalColor) * c.albedo;
+	} else {
+		finalColor *= c.albedo;
+	}
+	#endif
 
     half directionality = max(0.001, length(indirectDominantDir));
     half3 indirectKeyLight = directLighting;
@@ -501,8 +514,6 @@ half3 SCSS_ApplyLighting(SCSS_Input c, SCSS_ShadingParam p)
 	effectLightShadow += d.sh.L0;
 	#endif
 
-    half effectLightingClampScale = 1;
-
     // Workaround for scenes with HDR off blowing out in VRchat.
     if (getLightClampActive())
     {
@@ -512,8 +523,6 @@ half3 SCSS_ApplyLighting(SCSS_Input c, SCSS_ShadingParam p)
 	    // Note: Not luminance, because the final output is still tinted by the output colour.
 	    // So bright blue light is OK because blue is still dark.
 	    half maxEffectLight = max3(effectLighting);
-        // Store original light intensity before remapping, scale output by this instead of clamped values
-        effectLightingClampScale = max(maxEffectLight, 1);
 	    // The effect lighting is remapped to be within the 0-1.25 range when clamped.
 	    half modLight = min(maxEffectLight, 1.25);
 	    // Scale the values by the highest value.
@@ -555,7 +564,9 @@ half3 SCSS_ApplyLighting(SCSS_Input c, SCSS_ShadingParam p)
 	// Apply the light scaling if the light clamp is active. When the light clamp is active,
 	// the final colour is divided by the main light intensity.
 	// Todo: Test in URP and see if it still makes sense.
-   	if (getLightClampActive()) finalColor = finalColor / effectLightingClampScale;
+    #if defined(SCSS_CROSSTONE)
+        if (getLightClampActive()) finalColor = finalColor / max(max3(effectLighting), 1);
+   	#endif
 
 	finalColor *= _LightMultiplyAnimated;
 
