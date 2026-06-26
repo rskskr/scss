@@ -154,7 +154,7 @@ half3 calcDiffuseAdd(half3 albedo, SCSS_LightrampData data, half combinedAtten, 
     half3 directLighting = lightColor;
     half3 indirectLighting = lightColor * data.tone0.col;
 
-    lightContribution = lerp(indirectLighting, directLighting, lightContribution);
+    lightContribution = lerp(indirectLighting, directLighting, lightContribution) * albedo;
     return lightContribution;
 }
 
